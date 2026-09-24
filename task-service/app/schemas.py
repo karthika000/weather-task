@@ -27,7 +27,10 @@ class TaskUpdate(BaseModel):
 
 
 class TaskResponse(BaseModel):
-    """A task as returned by the API."""
+    """A task as returned by the API. created_at is deliberately not exposed."""
+
+    # Allows building the response directly from a SQLAlchemy Task object.
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     title: str
