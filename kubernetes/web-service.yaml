@@ -1,0 +1,78 @@
+# Web Service: browser UI + REST API. The ONLY externally exposed component.
+# Calls the Task Service and Weather Service through their Service DNS names.
+# Stateless, so it can be scaled with:
+#   kubectl scale deployment web-service -n weather-task --replicas=3
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-service
+  namespace: weather-task
+  labels:
+    app: web-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-service
+  template:
+    metadata:
+      labels:
+        app: web-service
+    spec:
+      containers:
+        - name: web-service
+          image: karthika212/weather-task-web:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            # Kubernetes Service DNS names (never pod IPs).
+            - name: TASK_SERVICE_URL
+              value: http://task-service:8001
+            - name: WEATHER_SERVICE_URL
+              value: http://weather-service:8002
+          # The image runs as "appuser" (uid 1000). A numeric uid is required
+          # so Kubernetes can verify runAsNonRoot for a named image user.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+# LoadBalancer Service: exposes the Web Service outside the cluster so it can be
+# opened in a normal web browser. (Docker Desktop's kind mode does not forward
+# NodePorts to the Windows host, but it does provide LoadBalancer Services.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+  namespace: weather-task
+spec:
+  type: LoadBalancer
+  selector:
+    app: web-service
+  ports:
+    - port: 8000
+      targetPort: 8000

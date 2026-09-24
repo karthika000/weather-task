@@ -1,0 +1,70 @@
+# Weather Service: weather REST API that calls the external Open-Meteo API.
+# Internal to the cluster, but makes outbound HTTPS requests to Open-Meteo.
+# Stateless, so it can be scaled with:
+#   kubectl scale deployment weather-service -n weather-task --replicas=3
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weather-service
+  namespace: weather-task
+  labels:
+    app: weather-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weather-service
+  template:
+    metadata:
+      labels:
+        app: weather-service
+    spec:
+      containers:
+        - name: weather-service
+          image: karthika212/weather-task-weather:1.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          # The image runs as "appuser" (uid 1000). A numeric uid is required
+          # so Kubernetes can verify runAsNonRoot for a named image user.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+# Internal-only Service. Reachable in the cluster as http://weather-service:8002
+apiVersion: v1
+kind: Service
+metadata:
+  name: weather-service
+  namespace: weather-task
+spec:
+  type: ClusterIP
+  selector:
+    app: weather-service
+  ports:
+    - port: 8002
+      targetPort: 8002

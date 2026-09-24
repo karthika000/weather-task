@@ -1,0 +1,104 @@
+# PostgreSQL: a single-replica Deployment with persistent storage (PVC).
+# Only the Task Service talks to it, through the internal ClusterIP Service.
+
+# Persistent storage for the database files. Survives pod restarts/recreation.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: weather-task
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: weather-task
+  labels:
+    app: postgres
+spec:
+  # The database is not scaled horizontally.
+  replicas: 1
+  # Stop the old pod before starting a new one, so two PostgreSQL
+  # processes never use the same ReadWriteOnce volume at the same time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: weathertask-db-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: weathertask-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: weathertask-db-secret
+                  key: POSTGRES_PASSWORD
+            # Keep the database files in a subdirectory of the mounted volume.
+            # Recommended by the postgres image, because a volume's root
+            # directory may not be empty (e.g. "lost+found") on some storage.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          # Ready only when PostgreSQL accepts TCP connections.
+          # (-h 127.0.0.1 skips the temporary socket-only server used during first-time init.)
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+# Internal-only Service (ClusterIP). Reachable inside the cluster as
+# postgres-service:5432, never from outside Kubernetes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: weather-task
+spec:
+  type: ClusterIP
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -1,4 +1,5 @@
 import logging
+import time
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,27 @@ app = FastAPI(title="WeatherTask Weather Service")
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 TIMEOUT_SECONDS = 5.0
+MAX_ATTEMPTS = 2  # the first attempt plus one retry
+RETRY_DELAY_SECONDS = 0.4
+
+
+def get_with_retry(url: str, params: dict) -> httpx.Response:
+    """GET a URL, retrying once if the connection itself fails.
+
+    One retry handles transient upstream connection failures (e.g. a TLS
+    handshake that is occasionally broken on the network path). Only
+    transport-level errors (httpx.TransportError: connect/read/write errors,
+    timeouts, protocol errors) are retried. An HTTP error status such as 4xx
+    is a real answer from Open-Meteo and is never retried.
+    """
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return httpx.get(url, params=params, timeout=TIMEOUT_SECONDS)
+        except httpx.TransportError as exc:
+            if attempt == MAX_ATTEMPTS:
+                raise  # still failing: call_open_meteo turns this into a 503
+            logger.warning("Open-Meteo attempt %d failed (%s), retrying once", attempt, exc)
+            time.sleep(RETRY_DELAY_SECONDS)
 
 
 def call_open_meteo(url: str, params: dict) -> dict:
@@ -24,7 +46,7 @@ def call_open_meteo(url: str, params: dict) -> dict:
     - other error status or invalid JSON          -> 502 Bad Gateway
     """
     try:
-        response = httpx.get(url, params=params, timeout=TIMEOUT_SECONDS)
+        response = get_with_retry(url, params)
         response.raise_for_status()
         data = response.json()
     except httpx.TimeoutException:

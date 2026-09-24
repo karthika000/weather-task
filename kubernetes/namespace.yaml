@@ -1,0 +1,5 @@
+# All WeatherTask resources live in their own namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: weather-task
